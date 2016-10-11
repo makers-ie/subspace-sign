@@ -1,0 +1,8 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP SN74LV1T34
+D Single Buffer CMOS Logic Level Shifter
+K CMOS TTL buffer level
+$ENDCMP
+#
+#End Doc Library

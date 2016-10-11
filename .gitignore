@@ -1,0 +1,10 @@
+*.bak
+*.bck
+*.kicad_pcb-bak
+/.pioenvs
+/.clang_complete
+/.gcc-flags.json
+/hardware/.rpt*
+/hardware/fp-lib-table
+/hardware/hardware-cache.lib
+/hardware/output/*.zip

@@ -136,7 +136,7 @@ static void ws2811_tx_intr(void) {
  * Add the given context to the interrupt handler contexts.
  * @return Zero on success. Non-zero if there is no space.
  */
-static int ws2811_add_intr_ctx(struct ws2811_context *ctx) {
+static int ICACHE_FLASH_ATTR ws2811_add_intr_ctx(struct ws2811_context *ctx) {
     for (int i = 0; i < WS2811_MAX_NUM_CONTEXTS; ++i) {
         if (!ws2811_intr_ctxs[i]) {
             ws2811_intr_ctxs[i] = ctx;

@@ -6,12 +6,15 @@
 #include <ws2811-esp8266.h>
 
 /* --- Functions --- */
+extern void ets_isr_unmask(uint32_t);
 extern void ets_memset(void *, uint8_t, int);
 extern void ets_printf(const char *, ...);
 extern void ets_timer_arm_new(ETSTimer *, int, int, int);
 extern void ets_timer_disarm(ETSTimer *);
 extern void ets_timer_setfn(ETSTimer *, ETSTimerFunc, void *);
+extern void uartAttach(void);
 extern void uart_div_modify(int, int);
+extern int UartGetCmdLn(char *buf);
 
 /* --- Data --- */
 // 0x00GGRRBB
@@ -25,31 +28,38 @@ static void ICACHE_FLASH_ATTR send_timeout(void *arg) {
     struct ws2811_context *ctx = (struct ws2811_context *)arg;
 
     uint32_t pos = i % led_buf_size;
-    if (pos) {
-        led_buf[pos] = 0x010101;
-    }
+    led_buf[pos] = 0x010101;
     ++i;
     pos = i % led_buf_size;
-    if (pos) {
-        led_buf[pos] = 0x7F7F7F;
-    }
+    led_buf[pos] = 0x7F7F7F;
 
     ws2811_send(ctx, led_buf, led_buf_size);
     ets_printf(".");
+
+    char cmdline[128];
+    if (!UartGetCmdLn(cmdline) && cmdline[0] == 'q') {
+        ets_printf("%s", cmdline);
+        system_restart();
+    }
+}
+
+static void ICACHE_FLASH_ATTR inited(void) {
+    os_timer_setfn(&send_tmr, send_timeout, &ws2811);
+    os_timer_arm(&send_tmr, 20 /* ms */, 1 /* autoload */);
+
+    ets_printf("booted\n");
 }
 
 void ICACHE_FLASH_ATTR user_init() {
+    uartAttach();
     uart_div_modify(0, UART_CLK_FREQ / 115200);
+    ETS_UART_INTR_ENABLE();
     gpio_init();
 
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_GPIO13);
     ws2811_init(&ws2811, 12, 13);
-
     os_memset(led_buf, 0, sizeof(led_buf));
-    led_buf[0] = 0x555555;
-    os_timer_setfn(&send_tmr, send_timeout, &ws2811);
-    os_timer_arm(&send_tmr, 20 /* ms */, 1 /* autoload */);
 
-    ets_printf("booted\n");
+    system_init_done_cb(inited);
 }

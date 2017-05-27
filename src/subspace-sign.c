@@ -3,7 +3,31 @@
 #include <osapi.h>
 #include <user_interface.h>
 
+#ifdef WS2811_IMPL_I2S
+#include <pin_mux_register.h>
+#include <ws2811-esp8266-i2s.h>
+#define WS2811_CONTEXT struct ws2811_i2s_context
+#define WS2811_INIT(ctx)                                                                                               \
+    do {                                                                                                               \
+        PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDO_U, FUNC_I2SO_BCK);                                                         \
+        PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0RXD_U, FUNC_I2SO_DATA);                                                       \
+        ws2811_i2s_init((ctx));                                                                                        \
+    \
+} while (0)
+#define WS2811_SEND(ctx, buf, len) ws2811_i2s_send((ctx), (buf), (len))
+#else
 #include <ws2811-esp8266.h>
+#define WS2811_CONTEXT struct ws2811_context
+#define WS2811_INIT(ctx)                                                                                               \
+    do {                                                                                                               \
+        PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);                                                           \
+        PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_GPIO13);                                                           \
+        gpio_init();                                                                                                   \
+        ws2811_init((ctx), 12, 13);                                                                                    \
+    \
+} while (0)
+#define WS2811_SEND(ctx, buf, len) ws2811_send((ctx), (buf), (len))
+#endif
 
 /* --- Functions --- */
 extern void ets_isr_unmask(uint32_t);
@@ -20,12 +44,12 @@ extern int UartGetCmdLn(char *buf);
 // 0x00GGRRBB
 static uint32_t led_buf[120];
 static const uint8_t led_buf_size = sizeof(led_buf) / sizeof(*led_buf);
-static struct ws2811_context ws2811;
+static WS2811_CONTEXT ws2811;
 static os_timer_t send_tmr;
 
 static void ICACHE_FLASH_ATTR send_timeout(void *arg) {
     static uint32_t i = 0;
-    struct ws2811_context *ctx = (struct ws2811_context *)arg;
+    WS2811_CONTEXT *ctx = (WS2811_CONTEXT *)arg;
 
     uint32_t pos = i % led_buf_size;
     led_buf[pos] = 0x010101;
@@ -33,7 +57,7 @@ static void ICACHE_FLASH_ATTR send_timeout(void *arg) {
     pos = i % led_buf_size;
     led_buf[pos] = 0x7F7F7F;
 
-    ws2811_send(ctx, led_buf, led_buf_size);
+    WS2811_SEND(ctx, led_buf, led_buf_size);
     ets_printf(".");
 
     char cmdline[128];
@@ -54,11 +78,8 @@ void ICACHE_FLASH_ATTR user_init() {
     uartAttach();
     uart_div_modify(0, UART_CLK_FREQ / 115200);
     ETS_UART_INTR_ENABLE();
-    gpio_init();
 
-    PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_GPIO12);
-    PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_GPIO13);
-    ws2811_init(&ws2811, 12, 13);
+    WS2811_INIT(&ws2811);
     os_memset(led_buf, 0, sizeof(led_buf));
 
     system_init_done_cb(inited);

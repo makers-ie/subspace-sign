@@ -1,1 +1,1 @@
-//#define USE_US_TIMER
+#define WS2811_IMPL_I2S

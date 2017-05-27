@@ -8,3 +8,7 @@
 /hardware/fp-lib-table
 /hardware/hardware-cache.lib
 /hardware/output/*.zip
+.pioenvs
+.piolibdeps
+.clang_complete
+.gcc-flags.json

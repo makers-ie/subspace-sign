@@ -1,7 +1,11 @@
 #include <ets_sys.h>
 #include <gpio.h>
 #include <osapi.h>
+#include <stdlib.h>
+#include <time.h>
 #include <user_interface.h>
+
+#include "clock.h"
 
 #ifdef WS2811_IMPL_I2S
 #include <pin_mux_register.h>
@@ -31,6 +35,7 @@
 
 /* --- Functions --- */
 extern void ets_isr_unmask(uint32_t);
+extern void ets_memcpy(void *, const void *, int);
 extern void ets_memset(void *, uint8_t, int);
 extern void ets_printf(const char *, ...);
 extern void ets_timer_arm_new(ETSTimer *, int, int, int);
@@ -43,22 +48,29 @@ extern int UartGetCmdLn(char *buf);
 /* --- Data --- */
 // 0x00GGRRBB
 static uint32_t led_buf[120];
-static const uint8_t led_buf_size = sizeof(led_buf) / sizeof(*led_buf);
+static const uint8_t LED_BUF_SIZE = sizeof(led_buf) / sizeof(*led_buf);
 static WS2811_CONTEXT ws2811;
 static os_timer_t send_tmr;
+static void (*update_leds)(void);
+static os_timer_t mode_tmr;
+static struct clock_context clockctx;
+
+static inline void ICACHE_FLASH_ATTR update_running_light(void) {
+    static uint32_t i = 0;
+    uint32_t pos = i % LED_BUF_SIZE;
+    led_buf[pos] = 0;
+    ++i;
+    pos = i % LED_BUF_SIZE;
+    led_buf[pos] = 0x7F7F7F;
+}
+
+static inline void ICACHE_FLASH_ATTR update_clock(void) { clock_update(&clockctx); }
 
 static void ICACHE_FLASH_ATTR send_timeout(void *arg) {
-    static uint32_t i = 0;
     WS2811_CONTEXT *ctx = (WS2811_CONTEXT *)arg;
 
-    uint32_t pos = i % led_buf_size;
-    led_buf[pos] = 0x010101;
-    ++i;
-    pos = i % led_buf_size;
-    led_buf[pos] = 0x7F7F7F;
-
-    WS2811_SEND(ctx, led_buf, led_buf_size);
-    ets_printf(".");
+    update_leds();
+    WS2811_SEND(ctx, led_buf, LED_BUF_SIZE);
 
     char cmdline[128];
     if (!UartGetCmdLn(cmdline) && cmdline[0] == 'q') {
@@ -67,11 +79,64 @@ static void ICACHE_FLASH_ATTR send_timeout(void *arg) {
     }
 }
 
+static void ICACHE_FLASH_ATTR mode_timeout(void *arg) {
+    if (update_leds == update_running_light && clock_is_valid(&clockctx)) {
+        update_leds = update_clock;
+    }
+}
+static void ICACHE_FLASH_ATTR scan_done(void *arg, STATUS status) {
+    if (status != OK) {
+        ets_printf("scan failed: %d\n", status);
+        return;
+    }
+
+    struct bss_info *best = NULL;
+    for (struct bss_info *bssp = (struct bss_info *)arg; bssp; bssp = STAILQ_NEXT(bssp, next)) {
+        ets_printf("  scan %d %s\n", bssp->authmode, bssp->ssid);
+        if (bssp->authmode != AUTH_OPEN) {
+            continue;
+        }
+        if (!best || best->rssi < bssp->rssi) {
+            best = bssp;
+        }
+    }
+
+    if (best) {
+        struct station_config stacfg;
+        os_memcpy(stacfg.ssid, best->ssid, sizeof(stacfg.ssid));
+        os_memcpy(stacfg.bssid, best->bssid, sizeof(stacfg.bssid));
+        stacfg.bssid_set = 1;
+        wifi_station_set_config(&stacfg);
+        wifi_station_connect();
+    }
+}
+
+static void ICACHE_FLASH_ATTR start_wifi_scan(void) {
+    struct scan_config scancfg;
+    os_memset(&scancfg, 0, sizeof(scancfg));
+    wifi_station_scan(&scancfg, scan_done);
+}
+
 static void ICACHE_FLASH_ATTR inited(void) {
     os_timer_setfn(&send_tmr, send_timeout, &ws2811);
-    os_timer_arm(&send_tmr, 20 /* ms */, 1 /* autoload */);
+    os_timer_arm(&send_tmr, 100 /* ms */, 1 /* autoload */);
+    os_timer_setfn(&mode_tmr, mode_timeout, NULL);
+    os_timer_arm(&mode_tmr, 1000 /* ms */, 1 /* autoload */);
 
     ets_printf("booted\n");
+    start_wifi_scan();
+}
+
+static void ICACHE_FLASH_ATTR handle_wifi_event(System_Event_t *event) {
+    switch (event->event) {
+    case EVENT_STAMODE_GOT_IP:
+        ets_printf("Connected\n");
+        break;
+
+    case EVENT_STAMODE_DISCONNECTED:
+        ets_printf("Disconnected\n");
+        break;
+    }
 }
 
 void ICACHE_FLASH_ATTR user_init() {
@@ -79,8 +144,18 @@ void ICACHE_FLASH_ATTR user_init() {
     uart_div_modify(0, UART_CLK_FREQ / 115200);
     ETS_UART_INTR_ENABLE();
 
+    wifi_station_set_auto_connect(false);
+    wifi_set_opmode(STATION_MODE);
+    wifi_set_event_handler_cb(handle_wifi_event);
+
     WS2811_INIT(&ws2811);
     os_memset(led_buf, 0, sizeof(led_buf));
+    update_leds = update_running_light;
+
+    if (!clock_init(&clockctx, led_buf, LED_BUF_SIZE)) {
+        ets_printf("Failed clock_init\n");
+        return;
+    }
 
     system_init_done_cb(inited);
 }

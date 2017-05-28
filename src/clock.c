@@ -7,12 +7,61 @@
 
 #include "clock.h"
 
+/* --- Types --- */
+struct sparkle_sprite {
+    uint32_t *led_buf;
+    uint8_t led_buf_size;
+
+    uint32_t color;
+    uint8_t index;
+    uint8_t att;
+    int32_t delay; // µs per pixel
+};
+
 /* --- Functions --- */
 extern void ets_memset(void *, uint8_t, int);
 extern void ets_printf(const char *, ...);
 
 /* --- Data --- */
 static const int MDAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+static void ICACHE_FLASH_ATTR sparkle_sprite_init(struct sparkle_sprite *sp, uint32_t *buf, uint8_t size,
+                                                  uint32_t color, int8_t index) {
+    sp->led_buf = buf;
+    sp->led_buf_size = size;
+
+    sp->color = color;
+    sp->att = 1;
+    if (index < 0) {
+        sp->index = -index;
+        sp->delay = -100000;
+    } else {
+        sp->index = index;
+        sp->delay = 100000;
+    }
+}
+
+static void ICACHE_FLASH_ATTR sparkle_sprite_draw(struct sparkle_sprite *sp) { sp->led_buf[sp->index] = sp->color; }
+
+static bool ICACHE_FLASH_ATTR sparkle_sprite_update(struct sparkle_sprite *sp, int32_t dt_us) {
+    static const uint32_t ATT_MASKS[] = {
+        0xFFFFFFFF, 0x7F7F7F7F, 0x3F3F3F3F, 0x1F1F1F1F, 0x0F0F0F0F, 0x07070707, 0x03030303, 0x01010101,
+    };
+
+    int32_t abs_delay = (sp->delay < 0 ? -sp->delay : sp->delay);
+    // TODO(tommie): Make this work with unaligned delays.
+    int32_t nt = (dt_us + abs_delay / 2) / sp->delay;
+    sp->index = (sp->index + nt + sp->led_buf_size) % sp->led_buf_size;
+
+    uint8_t n = (nt < 0 ? -nt : nt);
+    if (n * sp->att >= 8) {
+        sp->color = 0;
+    } else {
+        sp->color >>= n * sp->att;
+        sp->color &= ATT_MASKS[n * sp->att];
+    }
+    return sp->color != 0;
+}
 
 static int ICACHE_FLASH_ATTR cmp_last_wday_of_month(const struct tm *tm, int wday) {
     int mdays = MDAYS[tm->tm_mon];
@@ -92,4 +141,23 @@ void ICACHE_FLASH_ATTR clock_update(struct clock_context *ctx) {
     ctx->led_buf[(is - 1 + 120) % 120] |= 0x00000F;
     ctx->led_buf[is] |= 0x00003F;
     ctx->led_buf[(is + 1) % 120] |= 0x00000F;
+
+    static struct sparkle_sprite minute_sparkle[2];
+    static bool minute_sparkle_alive[2];
+    if (tm.tm_min != ctx->prev_tm.tm_min) {
+        sparkle_sprite_init(&minute_sparkle[0], ctx->led_buf, 120, 0x7F7F00, im);
+        sparkle_sprite_init(&minute_sparkle[1], ctx->led_buf, 120, 0x7F7F00, -im);
+        minute_sparkle_alive[0] = true;
+        minute_sparkle_alive[1] = true;
+    }
+    for (uint8_t i = 0; i < 2; ++i) {
+        if (minute_sparkle_alive[i]) {
+            minute_sparkle_alive[i] = sparkle_sprite_update(&minute_sparkle[i], 50000);
+        }
+        if (minute_sparkle_alive[i]) {
+            sparkle_sprite_draw(&minute_sparkle[i]);
+        }
+    }
+
+    ctx->prev_tm = tm;
 }

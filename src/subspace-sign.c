@@ -119,7 +119,10 @@ static void ICACHE_FLASH_ATTR start_wifi_scan(void) {
 
 static void ICACHE_FLASH_ATTR inited(void) {
     os_timer_setfn(&send_tmr, send_timeout, &ws2811);
-    os_timer_arm(&send_tmr, 100 /* ms */, 1 /* autoload */);
+    // If TxH+TxL = 1.2 µs, then 120 LEDs take 1.2 * 24 * 120 = 3.5 ms.
+    // So that's a minimum bound.
+    os_timer_arm(&send_tmr, 20 /* ms */, 1 /* autoload */);
+
     os_timer_setfn(&mode_tmr, mode_timeout, NULL);
     os_timer_arm(&mode_tmr, 1000 /* ms */, 1 /* autoload */);
 

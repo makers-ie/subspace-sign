@@ -7,6 +7,7 @@
 /* --- Types --- */
 struct clock_context {
     uint32_t *led_buf;
+    struct tm prev_tm;
 };
 
 /* --- Functions --- */

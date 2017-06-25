@@ -5,6 +5,8 @@
 #include <time.h>
 #include <user_interface.h>
 
+#include <firebase-http.h>
+#include <lwip-esp8266.h>
 #include "clock.h"
 
 #ifdef WS2811_IMPL_I2S
@@ -151,6 +153,8 @@ void ICACHE_FLASH_ATTR user_init() {
     wifi_set_opmode(STATION_MODE);
     wifi_set_event_handler_cb(handle_wifi_event);
 
+    lwip_esp8266_init();
+    
     WS2811_INIT(&ws2811);
     os_memset(led_buf, 0, sizeof(led_buf));
     update_leds = update_running_light;
